@@ -88,3 +88,94 @@
     (ok true)
   )
 )
+
+;; Update business settings
+(define-public (update-business
+    (name (string-ascii 64))
+    (webhook-url (optional (string-ascii 256)))
+    (fee-rate uint)
+  )
+  (let (
+      (caller tx-sender)
+      (current-business (unwrap! (map-get? businesses caller) ERR_BUSINESS_NOT_REGISTERED))
+    )
+    (asserts! (< fee-rate u1000) ERR_INVALID_AMOUNT)
+    ;; Max 10% fee
+    (asserts! (> (len name) u0) ERR_INVALID_AMOUNT)
+    ;; Name cannot be empty
+    (asserts! (<= (len name) u64) ERR_INVALID_AMOUNT)
+    ;; Name length check
+    (map-set businesses caller
+      (merge current-business {
+        name: name,
+        webhook-url: webhook-url,
+        fee-rate: fee-rate,
+      })
+    )
+    (ok true)
+  )
+)
+
+;; Create a new payment request
+(define-public (create-payment
+    (amount uint)
+    (description (string-ascii 256))
+    (reference-id (string-ascii 64))
+    (expires-in-blocks uint)
+  )
+  (let (
+      (caller tx-sender)
+      (payment-id (var-get next-payment-id))
+      (current-block stacks-block-height)
+      (expiry-block (+ current-block expires-in-blocks))
+    )
+    ;; Validation
+    (asserts! (> amount u0) ERR_INVALID_AMOUNT)
+    (asserts! (> expires-in-blocks u0) ERR_INVALID_AMOUNT)
+    (asserts! (< expires-in-blocks u4320) ERR_INVALID_AMOUNT)
+    ;; Max 30 days
+    (asserts! (> (len description) u0) ERR_INVALID_AMOUNT)
+    ;; Description cannot be empty
+    (asserts! (<= (len description) u256) ERR_INVALID_AMOUNT)
+    ;; Description length check
+    (asserts! (> (len reference-id) u0) ERR_INVALID_AMOUNT)
+    ;; Reference ID cannot be empty
+    (asserts! (<= (len reference-id) u64) ERR_INVALID_AMOUNT)
+    ;; Reference ID length check
+    (asserts! (is-some (map-get? businesses caller)) ERR_BUSINESS_NOT_REGISTERED)
+    (asserts!
+      (is-none (map-get? payment-references {
+        business: caller,
+        reference: reference-id,
+      }))
+      ERR_PAYMENT_ALREADY_PROCESSED
+    )
+
+    ;; Create payment
+    (map-set payments payment-id {
+      business: caller,
+      customer: none,
+      amount: amount,
+      description: description,
+      reference-id: reference-id,
+      status: "pending",
+      created-at: current-block,
+      expires-at: expiry-block,
+      processed-at: none,
+      processor: none,
+    })
+
+    ;; Set reference mapping
+    (map-set payment-references {
+      business: caller,
+      reference: reference-id,
+    }
+      payment-id
+    )
+
+    ;; Increment payment ID
+    (var-set next-payment-id (+ payment-id u1))
+
+    (ok payment-id)
+  )
+)
